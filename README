@@ -16,6 +16,7 @@ SYNOPSIS
     In httpd.conf:
 
       PerlModule Apache::Handlers
+      PerlChildInitHandler Apache::Handlers
       PerlPostReadRequestHandler Apache::Handlers
       <Perl>
         Apache::Handlers -> reset;
@@ -47,6 +48,12 @@ DESCRIPTION
     configuration the second time or is gracefully (or not so gracefully)
     restarted. It should be used to clean up so the second configuration
     process won't duplicate information or cause errors.
+
+    If this module is called during the ChildInit phase, then it will only
+    call that code associated with CHILDINIT blocks. Otherwise, the
+    CHILDINIT code will be run at the first opportunity (basically, the
+    first request made of the child process). Thus the two Perl*Handler
+    configuration directives in the Synopsis.
 
   Running without mod_perl
 
@@ -85,7 +92,6 @@ DESCRIPTION
     RESTART
     TRANS
     TYPE
-
   Attributes
 
     If Attribute::Handlers is available, then the following attributes are
@@ -132,7 +138,6 @@ DESCRIPTION
     PerlRestartHandler
     PerlTransHandler
     PerlTypeHandler
-
   Other Methods
 
     dump
@@ -183,6 +188,21 @@ CAVEATS
     request will throw a SERVER_ERROR and write $@ to either STDERR (if not
     in mod_perl and there is no "die" handler, such as the Error module) or
     to the Apache error log with a log level of debug.
+
+  "Use"ing modules
+
+    Any of the block constructs or attributes provided by this module that
+    are used in the body of a module that is brought in via the "use"
+    keyword will be considered to take place before the child is spawned.
+    This means that any code designated to run during a particular phase
+    will be run at the appropriate time as if the module had been loaded
+    during the server startup.
+
+    Modules can now rest assured that using a CLEANUP block in their file
+    will mean that code is run at the end of every request, even if the
+    module was loaded in the child process and not during server startup.
+
+    This is done by looking for code run during the BEGIN phase.
 
 BUGS
     Unlike caveats, bugs are features that are undesirable and/or get in the

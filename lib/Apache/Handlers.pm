@@ -1,30 +1,24 @@
 package Apache::Handlers;
 
-# $Id: Handlers.pm,v 1.1 2002/01/04 18:42:34 jgsmith Exp $
+# $Id: Handlers.pm,v 1.2 2002/01/07 15:28:35 jgsmith Exp $
 
 use strict;
 use Carp;
 use Apache::Constants qw(OK SERVER_ERROR DECLINED);
+use Perl::WhichPhase qw: in_BEGIN :;
 use vars qw:$VERSION @EXPORT_OK @ISA:;
 
 my $has_mod_perl = defined $INC{'Apache'};
 
 eval {
   use Apache::Log ();
-  Apache::ModuleCOnfig -> has_srv_config;
+  Apache::ModuleConfig -> has_srv_config;
 } if $has_mod_perl;
 
-$VERSION = "0.01";
+$VERSION = "0.02";
 @ISA = qw!Exporter!;
 
 my %code = ( );
-my $yet_initialized = 0;
-
-sub reset {
-  &run_phase( qw: RESTART :);
-  %code = ( );
-  $yet_initialized = 0;
-}
 
 sub dump {
   eval {
@@ -50,7 +44,7 @@ my %phases = qw:
   RESTART         PerlRestartHandler
 :;
 
-@EXPORT_OK = (qw:run_handlers:, keys %phases);
+@EXPORT_OK = (qw:run_phase:, keys %phases);
 
 my %sigil = qw:
   CODE   &
@@ -105,7 +99,7 @@ foreach my $p (keys %phases) {
     eval qq{
       sub $p (&) {
         my \$r;
-        if(\$r = Apache->request) {
+        if(!in_BEGIN && \$r = Apache->request) {
           my \$c = shift;
           $pusher;
         } else {
@@ -142,11 +136,23 @@ sub run_phase {
   }
 }
 
+my $yet_initialized = 0;
+
+sub reset {
+  &run_phase( qw: RESTART :);
+  %code = ( );
+  $yet_initialized = 0;
+}
+
 sub handler($) {
   my($r) = @_;
 
   return SERVER_ERROR
-      if not $yet_initialized and run_phase(qw: CHILDINIT :) == SERVER_ERROR;
+    if not $yet_initialized and run_phase(qw: CHILDINIT :) == SERVER_ERROR;
+
+  $yet_initialized = 1;
+
+  return OK if $r -> current_callback() eq 'PerlChildInitHandler';
 
   # install handlers
   foreach my $p (keys %code) {
@@ -260,6 +266,7 @@ In code:
 In httpd.conf:
 
   PerlModule Apache::Handlers
+  PerlChildInitHandler Apache::Handlers
   PerlPostReadRequestHandler Apache::Handlers
   <Perl>
     Apache::Handlers -> reset;
@@ -292,6 +299,12 @@ during the server startup phase when Apache reads the server configuration
 the second time or is gracefully (or not so gracefully) restarted.  It
 should be used to clean up so the second configuration process won't
 duplicate information or cause errors.
+
+If this module is called during the ChildInit phase, then it will only call
+that code associated with CHILDINIT blocks.  Otherwise, the CHILDINIT code
+will be run at the first opportunity (basically, the first request made of
+the child process).  Thus the two Perl*Handler configuration directives in
+the Synopsis.
 
 =head2 Running without mod_perl
 
@@ -474,6 +487,21 @@ If code causes an error (such that an eval would set $@), then the request
 will throw a SERVER_ERROR and write $@ to either STDERR (if not in mod_perl
 and there is no C<die> handler, such as the L<Error|Error> module) or to
 the Apache error log with a log level of debug.
+
+=head2 C<Use>ing modules
+
+Any of the block constructs or attributes provided by this module that are
+used in the body of a module that is brought in via the C<use> keyword will
+be considered to take place before the child is spawned.  This means that
+any code designated to run during a particular phase will be run at the
+appropriate time as if the module had been loaded during the server
+startup.
+
+Modules can now rest assured that using a CLEANUP block in their file will
+mean that code is run at the end of every request, even if the module was
+loaded in the child process and not during server startup.
+
+This is done by looking for code run during the BEGIN phase.
 
 =head1 BUGS
 
